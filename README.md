@@ -7,8 +7,8 @@ Analyse la vectorisation de ton code C/C++ et t'explique pourquoi certaines bouc
 ## Installation
 
 ```bash
-git clone https://github.com/Thedtk24/vec-audit
-cd vec-audit
+git clone https://github.com/Thedtk24/vec_audit
+cd vec_audit
 pip install -e .
 ```
 
