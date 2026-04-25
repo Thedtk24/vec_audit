@@ -1,12 +1,12 @@
 """
-vec-audit — reporter HTML (light theme)
+vec-audit — reporter HTML (clean)
 """
 
 from __future__ import annotations
 import html as html_mod
 from pathlib import Path
 
-from vec_audit.models import AuditReport, FailureKind, VectorizationStatus
+from vec_audit.models import AuditReport, FailureKind
 
 
 _KIND_LABEL: dict[FailureKind, str] = {
@@ -23,259 +23,171 @@ _KIND_LABEL: dict[FailureKind, str] = {
     FailureKind.UNKNOWN_CAUSE:      "unknown",
 }
 
-_KIND_COLOR: dict[FailureKind, str] = {
-    FailureKind.ALIASING:           "#c0392b",
-    FailureKind.CONTROL_FLOW:       "#e67e22",
-    FailureKind.UNKNOWN_TRIP_COUNT: "#8e44ad",
-    FailureKind.DATA_DEPENDENCE:    "#c0392b",
-    FailureKind.NOT_PROFITABLE:     "#7f8c8d",
-    FailureKind.DATA_ALIGNMENT:     "#2980b9",
-    FailureKind.FUNCTION_CALL:      "#16a085",
-    FailureKind.REDUCTION:          "#8e44ad",
-    FailureKind.OUTER_LOOP:         "#d35400",
-    FailureKind.UNSUPPORTED_TYPE:   "#c0392b",
-    FailureKind.UNKNOWN_CAUSE:      "#95a5a6",
-}
 
-_CSS = """
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+def _snippet(source_lines: list[str], target: int, ctx: int = 2) -> str:
+    if not source_lines or not (0 < target <= len(source_lines)):
+        return ""
+    start = max(0, target - 1 - ctx)
+    end   = min(len(source_lines), target + ctx)
+    rows  = ""
+    for ln, src in enumerate(source_lines[start:end], start=start + 1):
+        hl      = ' style="background:#fff5f5;"' if ln == target else ""
+        underline = ' style="border-bottom:1px solid #fca5a5;"' if ln == target else ""
+        escaped = html_mod.escape(src) if src.strip() else "&nbsp;"
+        rows += (
+            f'<div{hl}>'
+            f'<span style="color:#d1d5db;user-select:none;display:inline-block;'
+            f'width:3rem;text-align:right;padding-right:1rem;'
+            f'border-right:1px solid #f3f4f6;">{ln}</span>'
+            f'<span{underline}> {escaped}</span>'
+            f'</div>\n'
+        )
+    return (
+        f'<div style="background:#f9fafb;border:1px solid #f0f0f0;border-radius:3px;'
+        f'padding:1.25rem 1rem;margin-bottom:1.5rem;overflow-x:auto;">'
+        f'<pre style="margin:0;font-family:\'JetBrains Mono\',monospace;'
+        f'font-size:0.82rem;line-height:1.7;color:#374151;">{rows}</pre></div>'
+    )
 
-body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+def _render(report: AuditReport, source_lines: list[str] | None) -> str:
+    missed = [r for r in report.results if r.record.is_missed]
+    vecs   = [r for r in report.results if r.record.is_vectorized]
+    rate   = report.vectorization_rate
+    fname  = report.source_file.split("/")[-1]
+
+    # --- Missed sections ---
+    sections = ""
+    for i, result in enumerate(missed):
+        rec   = result.record
+        loc   = rec.location
+        kind  = _KIND_LABEL.get(rec.failure_kind, "unknown")
+        s     = result.suggestions[0] if result.suggestions else None
+
+        recommendation = ""
+        if s:
+            ex = ""
+            if s.example:
+                ex = (
+                    f'<pre style="margin:0.75rem 0 0;background:#f9fafb;border:1px solid #f0f0f0;'
+                    f'border-radius:3px;padding:0.75rem 1rem;font-family:\'JetBrains Mono\',monospace;'
+                    f'font-size:0.8rem;color:#374151;overflow-x:auto;white-space:pre;">'
+                    f'{html_mod.escape(s.example)}</pre>'
+                )
+            doc = ""
+            if s.doc_url:
+                doc = (
+                    f'<p style="font-size:0.72rem;color:#9ca3af;margin-top:0.5rem;">'
+                    f'<a href="{s.doc_url}" style="color:#9ca3af;" target="_blank">{s.doc_url}</a></p>'
+                )
+            recommendation = (
+                f'<div style="border-left:2px solid #1a1a1a;padding-left:1.5rem;padding-top:0.1rem;">'
+                f'<div style="font-size:0.65rem;font-weight:700;text-transform:uppercase;'
+                f'letter-spacing:0.1em;margin-bottom:0.4rem;">Recommendation</div>'
+                f'<p style="font-size:0.875rem;color:#6b7280;font-style:italic;margin:0;">'
+                f'{html_mod.escape(s.fix)}</p>{ex}{doc}</div>'
+            )
+
+        divider = (
+            '<div style="height:1px;background:#f0f0f0;margin:0 0 3.5rem;"></div>'
+            if i < len(missed) - 1 else ""
+        )
+
+        sections += (
+            f'<section style="margin-bottom:3.5rem;">'
+            f'<div style="display:flex;align-items:baseline;gap:1rem;margin-bottom:1rem;flex-wrap:wrap;">'
+            f'<h2 style="font-size:1.15rem;font-weight:500;margin:0;">Loop at line {loc.line}</h2>'
+            f'<span style="font-size:0.75rem;color:#9ca3af;">'
+            f'in {html_mod.escape(loc.file)}</span>'
+            f'<span style="margin-left:auto;font-size:0.65rem;font-weight:700;'
+            f'background:#fff5f5;color:#dc2626;padding:0.2rem 0.6rem;'
+            f'border-radius:3px;text-transform:uppercase;">{kind}</span>'
+            f'</div>'
+            f'<p style="font-size:0.875rem;color:#6b7280;line-height:1.7;margin-bottom:1.5rem;">'
+            f'Vectorization failed due to a '
+            f'<strong style="color:#1a1a1a;">{kind}</strong> issue.</p>'
+            f'{_snippet(source_lines or [], loc.line)}'
+            f'{recommendation}'
+            f'</section>'
+            f'{divider}'
+        )
+
+    # --- Vectorized (compact list) ---
+    if vecs:
+        if missed:
+            sections += '<div style="height:1px;background:#f0f0f0;margin:0 0 3.5rem;"></div>'
+        items = "".join(
+            f'<div style="display:flex;align-items:baseline;gap:1rem;'
+            f'margin-bottom:1.25rem;flex-wrap:wrap;">'
+            f'<h2 style="font-size:1.15rem;font-weight:500;margin:0;">'
+            f'Loop at line {r.record.location.line}</h2>'
+            f'<span style="font-size:0.75rem;color:#9ca3af;">'
+            f'in {html_mod.escape(r.record.location.file)}</span>'
+            f'<span style="margin-left:auto;font-size:0.65rem;font-weight:700;'
+            f'background:#f0fdf4;color:#16a34a;padding:0.2rem 0.6rem;'
+            f'border-radius:3px;text-transform:uppercase;">'
+            f'VECTORIZED'
+            f'{"&nbsp;·&nbsp;" + str(r.record.vector_width) + "B" if r.record.vector_width else ""}'
+            f'</span></div>'
+            for r in vecs
+        )
+        sections += f'<section>{items}</section>'
+
+    return f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>vec-audit | {html_mod.escape(fname)}</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=JetBrains+Mono&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    font-family: \'Inter\', -apple-system, sans-serif;
+    background: #fff;
+    color: #1a1a1a;
     font-size: 14px;
     line-height: 1.6;
-    color: #1a1a1a;
-    background: #f7f7f5;
-    padding: 2.5rem 1.5rem;
-}
+    padding: 3rem;
+    max-width: 820px;
+    margin: 0 auto;
+  }}
+  a {{ color: inherit; }}
+</style>
+</head>
+<body>
 
-.page { max-width: 860px; margin: 0 auto; }
+  <!-- Header -->
+  <header style="border-bottom:1px solid #f0f0f0;padding-bottom:1.25rem;margin-bottom:3rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;">
+      <span style="font-size:0.875rem;font-weight:600;letter-spacing:-0.01em;text-transform:uppercase;">
+        vec-audit <span style="color:#9ca3af;font-weight:300;">/ {html_mod.escape(fname)}</span>
+      </span>
+      <div style="display:flex;gap:1.5rem;font-size:0.75rem;font-weight:500;align-items:center;">
+        <div style="display:flex;align-items:center;gap:0.4rem;">
+          <span style="height:7px;width:7px;border-radius:50%;background:#22c55e;display:inline-block;"></span>
+          {report.vectorized_count} vectorized
+        </div>
+        <div style="display:flex;align-items:center;gap:0.4rem;">
+          <span style="height:7px;width:7px;border-radius:50%;background:#f87171;display:inline-block;"></span>
+          {report.missed_count} failed
+        </div>
+        <span style="color:#d1d5db;">|</span>
+        <span style="color:#9ca3af;font-weight:300;">{rate:.0f}%</span>
+      </div>
+    </div>
+    <div style="margin-top:0.4rem;font-size:0.7rem;color:#9ca3af;font-style:italic;">
+      {html_mod.escape(report.compiler)} &nbsp; {html_mod.escape(report.compiler_flags or "")}
+    </div>
+  </header>
 
-/* En-tête */
-.header { margin-bottom: 2.5rem; }
-.header h1 { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.01em; }
-.header .meta { margin-top: 0.25rem; color: #6b7280; font-size: 0.8rem; }
-.header .meta code {
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    background: #ebebeb;
-    padding: 0.1rem 0.35rem;
-    border-radius: 3px;
-}
+  <!-- Content -->
+  <main>
+    {sections}
+  </main>
 
-/* Statistiques */
-.stats {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1px;
-    background: #e5e5e3;
-    border: 1px solid #e5e5e3;
-    border-radius: 8px;
-    overflow: hidden;
-    margin-bottom: 1.5rem;
-}
-.stat {
-    background: #fff;
-    padding: 1rem 1.25rem;
-    text-align: center;
-}
-.stat .value { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; }
-.stat .label { font-size: 0.7rem; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0.1rem; }
-.stat.green .value { color: #16a34a; }
-.stat.red   .value { color: #dc2626; }
-.stat.blue  .value { color: #2563eb; }
-.stat.gray  .value { color: #374151; }
-
-/* Barre de progression */
-.progress {
-    height: 4px;
-    background: #e5e7eb;
-    border-radius: 2px;
-    margin-bottom: 2rem;
-    overflow: hidden;
-}
-.progress .fill {
-    height: 100%;
-    background: #16a34a;
-    border-radius: 2px;
-}
-
-/* Section titre */
-.section-title {
-    font-size: 0.7rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #9ca3af;
-    margin-bottom: 0.75rem;
-}
-
-/* Badges causes */
-.causes { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 2rem; }
-.cause-badge {
-    display: inline-flex; align-items: center; gap: 0.35rem;
-    padding: 0.2rem 0.6rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    background: #fff;
-    border: 1px solid #e5e5e3;
-    color: #374151;
-}
-.cause-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-
-/* Cards résultats */
-.card {
-    background: #fff;
-    border: 1px solid #e5e5e3;
-    border-radius: 8px;
-    margin-bottom: 0.75rem;
-    overflow: hidden;
-}
-
-.card-header {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    padding: 0.75rem 1rem;
-    cursor: pointer;
-    user-select: none;
-}
-.card-header:hover { background: #fafaf9; }
-
-.status-dot {
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    flex-shrink: 0;
-}
-.missed-dot   { background: #dc2626; }
-.success-dot  { background: #16a34a; }
-
-.loc {
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.8rem;
-    color: #374151;
-}
-
-.kind-pill {
-    font-size: 0.7rem;
-    font-weight: 500;
-    padding: 0.15rem 0.5rem;
-    border-radius: 3px;
-    color: #fff;
-}
-
-.spacer { flex: 1; }
-
-.chevron {
-    font-size: 0.7rem;
-    color: #d1d5db;
-    transition: transform 0.15s;
-}
-.chevron.open { transform: rotate(180deg); }
-
-/* Corps de la card */
-.card-body { display: none; border-top: 1px solid #f3f4f6; }
-.card-body.open { display: block; }
-
-/* Code snippet */
-.code-wrap {
-    overflow-x: auto;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.775rem;
-    line-height: 1.65;
-    background: #fafaf9;
-    border-bottom: 1px solid #f3f4f6;
-}
-.code-wrap table { border-collapse: collapse; width: 100%; }
-.code-wrap td { padding: 0 1rem; white-space: pre; }
-.code-wrap .ln {
-    color: #d1d5db;
-    text-align: right;
-    user-select: none;
-    width: 3rem;
-    border-right: 1px solid #f3f4f6;
-    padding-right: 0.75rem;
-}
-.code-wrap .hl { background: #fef2f2; }
-.code-wrap .hl .ln { color: #fca5a5; border-color: #fecaca; }
-
-/* Section diagnostic */
-.diagnostic { padding: 1rem 1.25rem; }
-
-.raw {
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.75rem;
-    color: #9ca3af;
-    margin-bottom: 1rem;
-}
-
-.suggestion { }
-
-.suggestion h3 {
-    font-size: 0.85rem;
-    font-weight: 600;
-    margin-bottom: 0.3rem;
-}
-
-.suggestion .expl {
-    font-size: 0.825rem;
-    color: #4b5563;
-    margin-bottom: 0.6rem;
-}
-
-.fix-box {
-    font-size: 0.8rem;
-    background: #f0f9ff;
-    border-left: 3px solid #3b82f6;
-    padding: 0.5rem 0.75rem;
-    border-radius: 0 4px 4px 0;
-    color: #1e40af;
-    margin-bottom: 0.75rem;
-}
-
-.example pre {
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.75rem;
-    background: #fafaf9;
-    border: 1px solid #e5e5e3;
-    border-radius: 4px;
-    padding: 0.75rem 1rem;
-    overflow-x: auto;
-    white-space: pre;
-    color: #374151;
-    margin-bottom: 0.75rem;
-}
-
-.doc-link { font-size: 0.75rem; color: #9ca3af; }
-.doc-link a { color: #6b7280; }
-
-/* Boucles vectorisées */
-.vec-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-    padding: 1rem;
-}
-.vec-chip {
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.75rem;
-    padding: 0.2rem 0.6rem;
-    background: #f0fdf4;
-    border: 1px solid #bbf7d0;
-    border-radius: 4px;
-    color: #15803d;
-}
-
-@media (max-width: 600px) {
-    .stats { grid-template-columns: repeat(2, 1fr); }
-}
-"""
-
-_JS = """
-function toggle(id) {
-    document.getElementById('b' + id).classList.toggle('open');
-    document.getElementById('c' + id).classList.toggle('open');
-}
-"""
+</body>
+</html>'''
 
 
 class HTMLReporter:
@@ -284,134 +196,4 @@ class HTMLReporter:
         self.source_lines = source_lines
 
     def render(self, report: AuditReport, output_path: Path) -> None:
-        output_path.write_text(self._build(report), encoding="utf-8")
-
-    def _build(self, report: AuditReport) -> str:
-        missed = [r for r in report.results if r.record.is_missed]
-        vecs   = [r for r in report.results if r.record.is_vectorized]
-        rate   = report.vectorization_rate
-
-        # Badges causes
-        by_kind = report.missed_by_kind()
-        badges = ""
-        for kind, count in sorted(by_kind.items(), key=lambda x: -x[1]):
-            color = _KIND_COLOR.get(kind, "#9ca3af")
-            label = _KIND_LABEL.get(kind, "unknown")
-            badges += (
-                f'<span class="cause-badge">'
-                f'<span class="cause-dot" style="background:{color}"></span>'
-                f'{label} &times;{count}</span>\n'
-            )
-
-        # Cards missed
-        missed_cards = ""
-        for i, result in enumerate(missed):
-            missed_cards += self._card(result, i)
-
-        # Chips vectorisées
-        vec_chips = ""
-        for r in vecs:
-            loc = r.record.location
-            w = f" ·{r.record.vector_width}B" if r.record.vector_width else ""
-            vec_chips += f'<span class="vec-chip">{loc.file}:{loc.line}{w}</span>\n'
-
-        vec_section = ""
-        if vec_chips:
-            vec_section = f"""
-<div class="section-title" style="margin-top:2rem">Vectorisées ({len(vecs)})</div>
-<div class="card">
-  <div class="vec-grid">{vec_chips}</div>
-</div>"""
-
-        return f"""<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>vec-audit — {html_mod.escape(report.source_file)}</title>
-<style>{_CSS}</style>
-</head>
-<body>
-<div class="page">
-
-  <div class="header">
-    <h1>vec-audit</h1>
-    <div class="meta">
-      <code>{html_mod.escape(report.source_file)}</code> &nbsp;·&nbsp;
-      <code>{html_mod.escape(report.compiler)}</code> &nbsp;·&nbsp;
-      <code>{html_mod.escape(report.compiler_flags or '—')}</code>
-    </div>
-  </div>
-
-  <div class="stats">
-    <div class="stat gray"><div class="value">{report.total}</div><div class="label">Total</div></div>
-    <div class="stat green"><div class="value">{report.vectorized_count}</div><div class="label">Vectorisées</div></div>
-    <div class="stat red"><div class="value">{report.missed_count}</div><div class="label">Ratées</div></div>
-    <div class="stat {"green" if rate >= 80 else "red" if rate < 50 else "blue"}">
-      <div class="value">{rate:.0f}%</div><div class="label">Taux</div>
-    </div>
-  </div>
-
-  <div class="progress"><div class="fill" style="width:{rate:.1f}%"></div></div>
-
-  {('<div class="causes">' + badges + '</div>') if badges else ''}
-
-  <div class="section-title">Non vectorisées ({len(missed)})</div>
-  {missed_cards or '<p style="color:#16a34a;font-size:0.875rem;padding:0.5rem 0">Toutes les boucles sont vectorisées.</p>'}
-
-  {vec_section}
-
-</div>
-<script>{_JS}</script>
-</body>
-</html>"""
-
-    def _card(self, result, idx: int) -> str:
-        rec  = result.record
-        loc  = rec.location
-        color = _KIND_COLOR.get(rec.failure_kind, "#9ca3af")
-        label = _KIND_LABEL.get(rec.failure_kind, "unknown")
-
-        suggestions_html = ""
-        for s in result.suggestions:
-            ex = ""
-            if s.example:
-                ex = f'<div class="example"><pre>{html_mod.escape(s.example)}</pre></div>'
-            doc = ""
-            if s.doc_url:
-                doc = f'<p class="doc-link"><a href="{s.doc_url}" target="_blank">{s.doc_url}</a></p>'
-            suggestions_html += f"""<div class="suggestion">
-  <h3>{html_mod.escape(s.title)}</h3>
-  <p class="expl">{html_mod.escape(s.explanation)}</p>
-  <div class="fix-box">{html_mod.escape(s.fix)}</div>
-  {ex}{doc}
-</div>"""
-
-        return f"""<div class="card">
-  <div class="card-header" onclick="toggle({idx})">
-    <span class="status-dot missed-dot"></span>
-    <span class="loc">{html_mod.escape(loc.file)}:{loc.line}</span>
-    <span class="kind-pill" style="background:{color}">{label}</span>
-    <span class="spacer"></span>
-    <span class="chevron open" id="c{idx}">▾</span>
-  </div>
-  <div class="card-body open" id="b{idx}">
-    {self._snippet(loc.line)}
-    <div class="diagnostic">
-      <div class="raw">{html_mod.escape(rec.raw_message)}</div>
-      {suggestions_html}
-    </div>
-  </div>
-</div>
-"""
-
-    def _snippet(self, target: int, ctx: int = 3) -> str:
-        if not self.source_lines:
-            return ""
-        start = max(0, target - 1 - ctx)
-        end   = min(len(self.source_lines), target + ctx)
-        rows  = ""
-        for i, src in enumerate(self.source_lines[start:end], start=start + 1):
-            hl  = ' class="hl"' if i == target else ""
-            rows += f'<tr{hl}><td class="ln">{i}</td><td>{html_mod.escape(src) or "&nbsp;"}</td></tr>\n'
-        return f'<div class="code-wrap"><table>{rows}</table></div>\n'
+        output_path.write_text(_render(report, self.source_lines), encoding="utf-8")
