@@ -1,6 +1,6 @@
 # vec-audit
 
-Analyse la vectorisation de ton code C/C++ et t'explique pourquoi certaines boucles ne sont pas optimisées — avec des suggestions concrètes pour les corriger.
+Analyzes the vectorization of your C/C++ code and explains why certain loops are not optimized — with concrete suggestions to fix them.
 
 ---
 
@@ -12,121 +12,121 @@ cd vec_audit
 pip install -e .
 ```
 
-**Prérequis :** Python 3.11+, GCC ou Clang.
+**Prerequisites:** Python 3.11+, GCC or Clang.
 
-Sur Linux :
+On Linux:
 ```bash
-sudo apt install gcc  
+sudo apt install gcc
+```
+
+On Mac with Homebrew:
+```bash
+brew install gcc   # installs gcc-14, gcc-15...
 ```
 
 ---
 
-## Utilisation
+## Usage
 
-### Commande principale
+### Main command
 
 ```bash
-vec-audit audit mon_code.c
+vec-audit audit my_code.c
 ```
 
-Sur Mac
+### On Mac (GCC via Homebrew)
 
 ```bash
-vec-audit audit mon_code.c --gcc gcc-15 # Mettez votre version de gcc
+vec-audit audit my_code.c --gcc gcc-15   # use your gcc version
 ```
 
-### Avec Clang
+### With Clang
 
 ```bash
-vec-audit audit mon_code.c --clang
+vec-audit audit my_code.c --clang
 ```
 
-### Exporter un rapport HTML
+### Export an HTML report
 
 ```bash
-vec-audit audit mon_code.c --gcc gcc-15 --html rapport.html
+vec-audit audit my_code.c --gcc gcc-15 --html report.html
 ```
 
-### Auditer un rapport déjà généré
+### Audit an already generated report
 
 ```bash
-# Générer le rapport manuellement
-gcc -O3 -march=native -fopt-info-vec-missed -c mon_code.c 2> rapport.txt
+# Generate the report manually
+gcc -O3 -march=native -fopt-info-vec-missed -c my_code.c 2> report.txt
 
-# L'auditer
-vec-audit parse rapport.txt --source mon_code.c
+# Audit it
+vec-audit parse report.txt --source my_code.c
 ```
 
 ---
 
-## Ce que tu vois dans le rapport
+## What you see in the report
 
 ```
-✗ mon_code.c:24  aliasing
-  → Ajouter __restrict__ sur les pointeurs
+✗ my_code.c:24  aliasing
+  → Add __restrict__ on pointers
 
-✗ mon_code.c:38  control flow
-  → Remplacer le if par une expression conditionnelle
+✗ my_code.c:38  control flow
+  → Replace the if with a conditional expression
 
-✓ mon_code.c:12  vectorisée (32 bytes)
+✓ my_code.c:12  vectorized (32 bytes)
 ```
 
-Pour chaque boucle non vectorisée, vec-audit t'indique :
-- la **ligne** concernée dans ton code
-- la **cause** précise (aliasing, control flow, data dependence...)
-- une **suggestion de correction** avec exemple de code
-- un **lien vers la documentation** officielle
+For each non-vectorized loop, vec-audit tells you:
+
+- The **line** concerned in your code
+- The **precise cause** (aliasing, control flow, data dependence...)
+- A **suggestion for correction** with a code example
+- A **link to the official documentation**
 
 ---
 
-## Causes détectées
+## Detected causes
 
-| Cause | Description | Solution rapide |
+| Cause | Description | Quick solution |
 |---|---|---|
-| `aliasing` | Deux pointeurs peuvent se chevaucher | Ajouter `__restrict__` |
-| `control flow` | `if` dans le corps de la boucle | Utiliser une expression ternaire |
-| `data dependence` | `a[i]` dépend de `a[i-1]` | Restructurer l'algorithme |
-| `unknown trip count` | Borne de boucle inconnue | Copier la borne dans une variable locale |
-| `data alignment` | Données mal alignées | Utiliser `alignas(32)` |
-| `function call` | Appel de fonction non inlinable | Ajouter `inline` ou `always_inline` |
-| `reduction` | Somme/max non reconnue | Utiliser `-ffast-math` |
+| `aliasing` | Two pointers might overlap | Add `__restrict__` |
+| `control flow` | `if` inside the loop body | Use a ternary expression |
+| `data dependence` | `a[i]` depends on `a[i-1]` | Restructure the algorithm |
+| `unknown trip count` | Unknown loop bound | Copy the bound into a local variable |
+| `data alignment` | Misaligned data | Use `alignas(32)` |
+| `function call` | Non-inlinable function call | Add `inline` or `always_inline` |
+| `reduction` | Unrecognized sum/max | Use `-ffast-math` |
 
 ---
 
 ## Options
 
 ```
-vec-audit audit <fichier> [options]
+vec-audit audit <file> [options]
 
-  --gcc BINAIRE     Binaire GCC à utiliser (défaut: gcc)
-                    Ex: --gcc gcc-15 sur Mac avec Homebrew
-  --clang           Utiliser Clang au lieu de GCC
-  --html FICHIER    Exporter le rapport en HTML
-  --flags FLAG...   Flags de compilation supplémentaires
-  --verbose / -v    Afficher aussi les boucles vectorisées
+  --gcc BINARY      GCC binary to use (default: gcc)
+                    Ex: --gcc gcc-15 on Mac with Homebrew
+  --clang           Use Clang instead of GCC
+  --html FILE       Export the report in HTML
+  --flags FLAG...   Additional compilation flags
+  --verbose / -v    Also display vectorized loops
 
-vec-audit parse <rapport> [options]
+vec-audit parse <report> [options]
 
-  --compiler        gcc ou clang (défaut: gcc)
-  --source FICHIER  Fichier source pour afficher les extraits de code
-  --html FICHIER    Exporter le rapport en HTML
+  --compiler        gcc or clang (default: gcc)
+  --source FILE     Source file to display code snippets
+  --html FILE       Export the report in HTML
 ```
 
 ---
 
-## Contribuer
+## Contributing
 
-Les suggestions de vec-audit sont basées sur un catalogue de patterns dans `vec_audit/parsers/gcc.py` et `vec_audit/diagnostics/engine.py`.
+The suggestions from vec-audit are based on a pattern catalog in `vec_audit/parsers/gcc.py` and `vec_audit/diagnostics/engine.py`.
 
-Si tu rencontres un message de compilateur non reconnu (`unknown`), c'est une opportunité de contribution :
+If you encounter an unrecognized compiler message (`unknown`), it's an opportunity to contribute:
 
-1. Note le message brut affiché dans le rapport
-2. Ajoute le pattern dans `_FAILURE_PATTERNS` (parser)
-3. Ajoute la suggestion dans `_SUGGESTIONS` (engine)
-4. Ouvre une Pull Request
-
----
-
-## Licence
-
-MIT
+1. Note the raw message displayed in the report
+2. Add the pattern in `_FAILURE_PATTERNS` (parser)
+3. Add the suggestion in `_SUGGESTIONS` (engine)
+4. Open a Pull Request
